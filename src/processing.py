@@ -2,8 +2,6 @@ from bs4 import BeautifulSoup
 import requests
 import connection as c
 
-#ATT GÖRA: skapa en funktion som tar en bild som argument och vektoriserar den. Returnera vektorn.
-
 class web:
 
     #räkna ut antalet sidor med produkter
