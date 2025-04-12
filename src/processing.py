@@ -33,18 +33,18 @@ class web:
         print("Cooking...")
 
         # skrapa varje sida
-        for current_page in range(1, nr_of_pages+1):
+        for current_page in range(1, 2):
             web_page = requests.get("https://www.myrorna.se/shop/sida/" + str(current_page) + "/")
             soup = BeautifulSoup(web_page.text, "html.parser")
             products = soup.find_all("img", attrs={"class": "auction-image"})
-
+            
             for product in products:
                 try:
                     product_info = product.get("alt").split(", ",1)
 
                     image_url = product.get("src")
 
-                    vector = data.get_image_embedding_from_url(image_url, processor, model, device)
+                    vector = data.vectorize(image_url, processor, model, device)
 
                     #i listan product_info i index 0 finns produktens namn, i index 1 finns produktens beskrivning
                     if len(product_info) >=2:
@@ -52,9 +52,9 @@ class web:
 
                     if len(product_info) == 1:
                         data.insert(product, vector, product_info[0], "")
-                        
-                except:
-                    pass
+                    
+                except Exception as e:
+                    print(f"Error: {e}")
 
             c.conn.commit()
             print("\r{}%".format(round(current_page*100/nr_of_pages),1),end="", flush=True) #printa procent statusen av skrapningen
@@ -66,7 +66,6 @@ class web:
 
 class data:
 
-
     #SQL query för att radera all data och skapa en ny table för ny data
     def clean_table():
         c.cursor.execute("""
@@ -75,7 +74,7 @@ class data:
         CREATE TABLE IF NOT EXISTS products (
             id SERIAL PRIMARY KEY,
             imageURL TEXT,
-            embedding FLOAT8[],
+            embedding vector(512),
             name TEXT,
             description TEXT
         );                    
@@ -89,13 +88,15 @@ class data:
     
 
     def find_similar(vector) -> list:
-        c.cursor.execute("""
-            SELECT imageURL 
-            FROM products 
-            WHERE embedding <-> '%s' < 0.5
-            ORDER BY embedding <-> '%s'
-            LIMIT 5;
-        """, vector, vector)
+
+        query = """
+        SELECT imageURL 
+        FROM products 
+        ORDER BY embedding <-> %s::vector
+        LIMIT 5;
+        """
+
+        c.cursor.execute(query, (vector,))
 
         similar_images = c.cursor.fetchall() #detta ger utseende av ex: [(1.jpg, ), (2.jpg, ), (3.jpg, )] därför loopar vi genom den och förbättrar output
 
@@ -106,19 +107,19 @@ class data:
     
 
 
-    def get_single_image_embedding(image, processor, model, device):
+    def CLIP(image, processor, model, device):
         inputs = processor(images=image, return_tensors="pt").to(device)
         with torch.no_grad():
             embeddings = model.get_image_features(**inputs)
         return embeddings.cpu().numpy().flatten()
 
-    # Main function: takes an image URL
-    def get_image_embedding_from_url(image_url, processor, model, device):
+    def vectorize(image_url):
         try:
             response = requests.get(image_url, timeout=10)
             image = Image.open(BytesIO(response.content)).convert("RGB")
-            embedding = data.get_single_image_embedding(image, processor, model, device)
-            return embedding
+            embedding = data.CLIP(image, processor, model, device)
+            return embedding.tolist()
+        
         except Exception as e:
             print(f"Error processing image from {image_url}: {e}")
             return None
