@@ -1,6 +1,16 @@
 from bs4 import BeautifulSoup
-import requests
 import connection as c
+import torch
+import requests
+from PIL import Image
+from io import BytesIO
+from transformers import CLIPProcessor, CLIPModel
+
+
+model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model.to(device)
 
 #ATT GÖRA: skapa en funktion som tar en bild som argument och vektoriserar den. Returnera vektorn.
 
@@ -31,12 +41,17 @@ class web:
             for product in products:
                 try:
                     product_info = product.get("alt").split(", ",1)
+
+                    image_url = product.get("src")
+
+                    vector = data.get_image_embedding_from_url(image_url, processor, model, device)
+
                     #i listan product_info i index 0 finns produktens namn, i index 1 finns produktens beskrivning
                     if len(product_info) >=2:
-                        data.insert(product, product_info[0], product_info[1]) # src is the imageURL and alt is the product description
+                        data.insert(product, vector, product_info[0], product_info[1]) # src is the imageURL and alt is the product description
 
                     if len(product_info) == 1:
-                        data.insert(product, product_info[0], "")
+                        data.insert(product, vector, product_info[0], "")
                         
                 except:
                     pass
@@ -51,6 +66,7 @@ class web:
 
 class data:
 
+
     #SQL query för att radera all data och skapa en ny table för ny data
     def clean_table():
         c.cursor.execute("""
@@ -59,24 +75,25 @@ class data:
         CREATE TABLE IF NOT EXISTS products (
             id SERIAL PRIMARY KEY,
             imageURL TEXT,
+            embedding FLOAT8[],
             name TEXT,
-            info TEXT
+            description TEXT
         );                    
         """)
     
-    def insert(product:dict, name:str, desc:str):
+    def insert(product:dict, vector, name:str, desc:str):
         c.cursor.execute("""
-        INSERT INTO products (imageURL, name, info)
-        VALUES (%s, %s, %s);
-        """, (product.get("src"), name, desc))
+        INSERT INTO products (imageURL, embedding, name, description)
+        VALUES (%s, %s, %s, %s);
+        """, (product.get("src"), vector, name, desc))
     
 
     def find_similar(vector) -> list:
         c.cursor.execute("""
             SELECT imageURL 
             FROM products 
-            WHERE vectorIMG <-> '%s' < 0.5
-            ORDER BY vectorIMG <-> '%s'
+            WHERE embedding <-> '%s' < 0.5
+            ORDER BY embedding <-> '%s'
             LIMIT 5;
         """, vector, vector)
 
@@ -86,4 +103,29 @@ class data:
             similar_images[i] = similar_images[i][0]
 
         return similar_images
+    
+
+
+    def get_single_image_embedding(image, processor, model, device):
+        inputs = processor(images=image, return_tensors="pt").to(device)
+        with torch.no_grad():
+            embeddings = model.get_image_features(**inputs)
+        return embeddings.cpu().numpy().flatten()
+
+    # Main function: takes an image URL
+    def get_image_embedding_from_url(image_url, processor, model, device):
+        try:
+            response = requests.get(image_url, timeout=10)
+            image = Image.open(BytesIO(response.content)).convert("RGB")
+            embedding = data.get_single_image_embedding(image, processor, model, device)
+            return embedding
+        except Exception as e:
+            print(f"Error processing image from {image_url}: {e}")
+            return None
+
+
+
+
+
+
     
