@@ -106,7 +106,6 @@ class data:
         return similar_images
     
 
-
     def CLIP(image, processor, model, device):
         inputs = processor(images=image, return_tensors="pt").to(device)
         with torch.no_grad():
